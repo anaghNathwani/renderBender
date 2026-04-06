@@ -60,5 +60,13 @@ The architecture is designed to ensure quick response times and high-quality out
 ## Contributing
 If you want to contribute to LaughterGPT, please fork the repository and submit a pull request with your enhancements or fixes.
 
+## Usage
+To traint the model, use either of the following two commands for best results:
+1. python ai_agent.py train wikitext2
+2. python ai_agent.py train wiki <topic name>
+
+To chat with the model, use the following command for beest results:
+python ai_agent.py generate "<your message here>"
+
 ## License
 LaughterGPT is licensed under the MIT License. See the `LICENSE` file for more details.
