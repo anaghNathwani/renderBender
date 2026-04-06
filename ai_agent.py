@@ -1,25 +1,16 @@
-class AIAgent:
-    def __init__(self):
-        self.instructions = []
+# Advanced AI Agent Entry Point
 
-    def accept_instruction(self, instruction: str):
-        self.instructions.append(instruction)
-        print(f"Instruction received: {instruction}")
+# Importing necessary modules
+from modular_system import ModularSystem
 
-    def train(self):
-        if not self.instructions:
-            print("No instructions to train on.")
-            return
-        print("Training with the following instructions:")
-        for instr in self.instructions:
-            print(f"- {instr}")
+# Define the main function
 
-# Example usage:
+def main():
+    # Initialize the modular system
+    modular_system = ModularSystem()
+    
+    # Start the AI agent functionalities
+    modular_system.start()
+
 if __name__ == '__main__':
-    agent = AIAgent()
-    while True:
-        instruction = input("Enter instruction for AI agent (or 'exit' to quit): ")
-        if instruction.lower() == 'exit':
-            break
-        agent.accept_instruction(instruction)
-    agent.train()
+    main()
