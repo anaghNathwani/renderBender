@@ -1,33 +1,45 @@
 #!/usr/bin/env python3
 """
-Train the OccupancyNetwork on your own 3D mesh files.
+Train the OccupancyNetwork on 3D mesh files.
 
 HOW IT WORKS
 ────────────
-For each mesh in --data:
+For each mesh:
   1. Sample random 3D points inside and outside the mesh.
   2. Label each point: 1.0 = inside, 0.0 = outside.
   3. Train the network to predict inside/outside from (xyz + text_embedding).
-  4. After training, the network learns the shape of your meshes.
 
-USAGE
-─────
-  # Train on all .obj / .stl / .ply files in a folder:
+OPEN-SOURCE DATASETS (no data needed — downloads automatically)
+───────────────────────────────────────────────────────────────
+  # ModelNet10 (~70 MB, 10 categories, no registration):
+  python train.py --dataset modelnet10
+
+  # ModelNet40 (~435 MB, 40 categories, no registration):
+  python train.py --dataset modelnet40 --categories chair,table,lamp
+
+  # Objaverse (800K+ objects, requires: pip install objaverse):
+  python train.py --dataset objaverse --categories chair --n 200
+
+  List all available datasets:
+  python datasets.py list
+
+  List categories in a dataset:
+  python datasets.py categories --dataset modelnet40
+
+YOUR OWN DATA
+─────────────
   python train.py --data ./my_shapes/
 
-  # With options:
-  python train.py --data ./shapes/ --epochs 200 --lr 1e-3 --batch 1024 --out models/weights/model
-
-  # Train per-shape (one weights file per mesh name):
-  python train.py --data ./shapes/ --per-shape
-
-  # Resume from existing weights:
-  python train.py --data ./shapes/ --resume models/weights/model.npz
+OTHER OPTIONS
+─────────────
+  python train.py --dataset modelnet10 --epochs 200 --lr 1e-3 --batch 1024
+  python train.py --dataset modelnet40 --per-shape   # one weights file per category
+  python train.py --dataset modelnet10 --resume models/weights/model.npz
 
 RESULT
 ──────
-  Saves weights to models/weights/model.npz  (or <name>.npz with --per-shape)
-  The generator automatically loads these weights at generation time.
+  Saves to models/weights/model.npz  (or <category>.npz with --per-shape)
+  Generator auto-loads these weights. Set neural_blend > 0 in the GUI.
 
 REQUIREMENTS
 ────────────
@@ -302,8 +314,19 @@ def _train_numpy(xyz_all, labels_all, emb, epochs, lr, batch_size, resume, out_p
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data",      required=True,
-                    help="Folder of .obj/.stl/.ply/.glb files to train on")
+
+    src = ap.add_mutually_exclusive_group()
+    src.add_argument("--data",    default=None,
+                     help="Folder of .obj/.stl/.ply/.glb files to train on")
+    src.add_argument("--dataset", default=None,
+                     choices=["modelnet10","modelnet40","objaverse"],
+                     help="Download + use an open-source dataset automatically")
+
+    ap.add_argument("--categories", default=None,
+                    help="Comma-separated list of categories (e.g. chair,table,lamp). "
+                         "Applies to --dataset. Use 'all' for everything.")
+    ap.add_argument("--n",         type=int, default=None,
+                    help="Max number of meshes to use from --dataset")
     ap.add_argument("--out",       default="models/weights/model",
                     help="Output path (no extension). Default: models/weights/model")
     ap.add_argument("--epochs",    type=int,   default=150,  help="Training epochs (default 150)")
@@ -314,20 +337,57 @@ def main():
     ap.add_argument("--resume",    default=None,
                     help="Resume from existing .npz weights file")
     ap.add_argument("--per-shape", action="store_true",
-                    help="Save separate weights per mesh (named after the file)")
+                    help="Save separate weights per category (--dataset) or mesh (--data)")
     ap.add_argument("--verbose",   action="store_true", help="Print every epoch")
     ap.add_argument("--prompt",    default="",
-                    help="Text prompt describing the shapes (used to build text embedding)")
+                    help="Text prompt / description of the shapes (for text embedding)")
+    ap.add_argument("--list-datasets",  action="store_true",
+                    help="List available open-source datasets and exit")
+    ap.add_argument("--list-categories", metavar="DATASET",
+                    help="List categories in a dataset and exit")
     args = ap.parse_args()
 
-    # Discover mesh files
-    exts = ("*.obj", "*.stl", "*.ply", "*.glb", "*.gltf", "*.off")
-    files = []
-    for ext in exts:
-        files.extend(glob.glob(os.path.join(args.data, "**", ext), recursive=True))
-    files = sorted(set(files))
+    # Info-only modes
+    if args.list_datasets:
+        import datasets as ds_mod
+        print("Available datasets:")
+        for name in ds_mod.list_datasets():
+            print(f"  {ds_mod.describe(name)}")
+        return
+
+    if args.list_categories:
+        import datasets as ds_mod
+        cats = ds_mod.list_categories(args.list_categories)
+        print(f"{args.list_categories} ({len(cats)} categories):")
+        for c in cats: print(f"  {c}")
+        return
+
+    if not args.data and not args.dataset:
+        ap.error("Provide either --data <folder> or --dataset <name>")
+
+    # Resolve file list
+    if args.dataset:
+        import datasets as ds_mod
+        cats = [c.strip() for c in args.categories.split(",")] \
+               if args.categories else None
+        print(f"Dataset : {args.dataset}")
+        if cats: print(f"Categories: {cats}")
+        files = ds_mod.get_files(
+            name=args.dataset, categories=cats, split="train",
+            n=args.n, prompt=args.prompt,
+        )
+        # For --per-shape on a dataset, group by category
+        _category_of = lambda f: Path(f).parent.parent.name  # ModelNet layout
+    else:
+        exts = ("*.obj","*.stl","*.ply","*.glb","*.gltf","*.off")
+        files = []
+        for ext in exts:
+            files.extend(glob.glob(os.path.join(args.data, "**", ext), recursive=True))
+        files = sorted(set(files))
+        _category_of = lambda f: Path(f).stem
+
     if not files:
-        print(f"No mesh files found in {args.data}")
+        print("No mesh files found. Exiting.")
         sys.exit(1)
 
     print(f"Found {len(files)} mesh file(s).")
@@ -346,19 +406,31 @@ def main():
     from models.generator import encode_text
 
     if args.per_shape:
+        # Group files by category (for datasets) or treat each file individually
+        from collections import defaultdict
+        groups = defaultdict(list)
         for fpath in files:
-            print(f"\n── {Path(fpath).name} ──")
-            try:
-                mesh = load(fpath); mesh.normalize()
-                xyz, labels = sample_mesh_points(mesh, args.surface, args.random)
-                prompt = args.prompt or Path(fpath).stem.replace("_", " ")
-                emb    = encode_text(prompt)
-                out    = os.path.join(os.path.dirname(args.out),
-                                      Path(fpath).stem)
-                _trainer(xyz, labels, emb, args.epochs, args.lr, args.batch,
-                         args.resume, out, args.verbose)
-            except Exception as e:
-                print(f"  Skipping {fpath}: {e}")
+            groups[_category_of(fpath)].append(fpath)
+
+        for group_name, group_files in sorted(groups.items()):
+            print(f"\n── {group_name} ({len(group_files)} meshes) ──")
+            all_xyz, all_labels = [], []
+            for fpath in group_files:
+                try:
+                    mesh = load(fpath); mesh.normalize()
+                    xyz, labels = sample_mesh_points(mesh, args.surface, args.random)
+                    all_xyz.append(xyz); all_labels.append(labels)
+                except Exception as e:
+                    print(f"  Skipping {Path(fpath).name}: {e}")
+            if not all_xyz:
+                continue
+            xyz_all    = np.vstack(all_xyz)
+            labels_all = np.concatenate(all_labels)
+            prompt = args.prompt or group_name.replace("_", " ")
+            emb    = encode_text(prompt)
+            out    = os.path.join(os.path.dirname(args.out), group_name)
+            _trainer(xyz_all, labels_all, emb, args.epochs, args.lr, args.batch,
+                     args.resume, out, args.verbose)
     else:
         # Combine all meshes
         all_xyz, all_labels = [], []
